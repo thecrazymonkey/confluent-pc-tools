@@ -3,12 +3,10 @@ package io.confluent.ps.pctools;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
 
 import io.confluent.parallelconsumer.offsets.OffsetDecodingError;
 import lombok.extern.slf4j.Slf4j;
@@ -17,14 +15,13 @@ import org.apache.kafka.clients.admin.*;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import io.confluent.parallelconsumer.offsets.OffsetMapCodecManager;
-import org.apache.kafka.common.protocol.types.Field;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
 @Slf4j
-@Command(name = "ksfkspcgroups", mixinStandardHelpOptions = true, version = "kafkapcgroups 1.0",
+@Command(name = "kafkapcgroups", mixinStandardHelpOptions = true, version = "kafkapcgroups 1.0",
         description = "Prints highest seen offset and incomplete offsets for parallel consumer groups.")
 class KafkaPcGroups implements Callable<Integer> {
     @Parameters(paramLabel = "<group>", description = "Consumer group ID.")
@@ -65,8 +62,7 @@ class KafkaPcGroups implements Callable<Integer> {
             Set<Long> incompleteOffsets = new HashSet<>();
             Optional<Long> highestSeenOffset = Optional.empty();
             if (offsetAndMetadata.metadata().length()>0) {
-                OffsetMapCodecManager.HighestOffsetAndIncompletes highestOffsetAndIncompletes =
-                        null;
+                OffsetMapCodecManager.HighestOffsetAndIncompletes highestOffsetAndIncompletes;
                 try {
                     highestOffsetAndIncompletes =
                             OffsetMapCodecManager.deserialiseIncompleteOffsetMapFromBase64(offsetAndMetadata.offset(), offsetAndMetadata.metadata());
@@ -90,9 +86,9 @@ class KafkaPcGroups implements Callable<Integer> {
                                 offsetAndMetadata.offset(), highestSeenOffset.orElse(tpInfo.getValue().offset()), tpInfo.getValue().offset(),
                                 tpInfo.getValue().offset() - offsetAndMetadata.offset(),
                                 tpInfo.getValue().offset() - highestSeenOffset.orElse(tpInfo.getValue().offset()) - incompleteOffsets.size(),
-                                StringUtils.defaultIfBlank(memberInfo.consumerId(),"-"),
-                                StringUtils.defaultIfBlank(memberInfo.host(), "-"),
-                                StringUtils.defaultIfBlank(memberInfo.clientId(),"-"),
+                                memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.consumerId(),"-") : "-",
+                                memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.host(), "-") : "-",
+                                memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.clientId(),"-") : "-",
                                 StringUtils.defaultIfBlank(incompleteOffsets.toString(), "[]"));
             }
         }
