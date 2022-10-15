@@ -69,6 +69,7 @@ class KafkaPcGroups implements Callable<Integer> {
                 var cgInfo = aclient.listConsumerGroupOffsets(groupId,
                         new ListConsumerGroupOffsetsOptions().timeoutMs(timeout)).partitionsToOffsetAndMetadata().get();
                 var members = cgDescribe.get(groupId).get().members();
+                // TODO - better size adjustment based on real length of the result
                 System.out.format("%-60s %-80s %-10s %-15s %-15s %-15s %-15s %-15s %-140s %-100s %-100s %-50s%n",
                         "GROUP", "TOPIC", "PARTITION", "CURRENT-OFFSET", "HIGHEST-OFFSET", "LOG-END-OFFSET",
                         "LAG", "ADJUSTED-LAG", "CONSUMER-ID", "HOST", "CLIENT-ID", "INCOMPLETE-ID");
