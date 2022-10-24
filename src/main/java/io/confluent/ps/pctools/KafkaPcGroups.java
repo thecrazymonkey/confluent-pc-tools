@@ -19,6 +19,8 @@ import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
+import static java.lang.Math.max;
+
 @Slf4j
 @Command(name = "kafkapcgroups", mixinStandardHelpOptions = true, version = "kafkapcgroups 1.0",
         description = "Prints highest seen offset and incomplete offsets for parallel consumer groups.")
@@ -69,10 +71,7 @@ class KafkaPcGroups implements Callable<Integer> {
                 var cgInfo = aclient.listConsumerGroupOffsets(groupId,
                         new ListConsumerGroupOffsetsOptions().timeoutMs(timeout)).partitionsToOffsetAndMetadata().get();
                 var members = cgDescribe.get(groupId).get().members();
-                // TODO - better size adjustment based on real length of the result
-                System.out.format("%-60s %-80s %-10s %-15s %-15s %-15s %-15s %-15s %-140s %-100s %-100s %-50s%n",
-                        "GROUP", "TOPIC", "PARTITION", "CURRENT-OFFSET", "HIGHEST-OFFSET", "LOG-END-OFFSET",
-                        "LAG", "ADJUSTED-LAG", "CONSUMER-ID", "HOST", "CLIENT-ID", "INCOMPLETE-ID");
+                int groupLen = max(15, groupId.length());
                 if (cgInfo.size() != 0) {
                     // with consumer info
                     for (var tp : cgInfo.entrySet()) {
@@ -88,40 +87,78 @@ class KafkaPcGroups implements Callable<Integer> {
                                 incompleteOffsets = highestOffsetAndIncompletes.getIncompleteOffsets();
                             } catch (OffsetDecodingError e) {
                                 // invalid encoding of metadata not for PC
-                                log.info("Group {} - decoding error - metadata is not valid or not from Parallel consumer.", groupId);
+                                log.warn("Group {} - decoding error - metadata is not valid or not from Parallel consumer.", groupId);
                             } catch (Exception e) {
                                 log.info("Group {} - metadata is not valid or not from Parallel consumer.", groupId);
                             }
                         }
                         MemberDescription memberInfo = getMemberForPartion(members, tp.getKey());
+                        String consumerID = memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.consumerId(), "-") : "-";
+                        String host = memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.host(), "-") : "-";
+                        String clientId = memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.clientId(), "-") : "-";
+                        String incomplete = StringUtils.defaultIfBlank(incompleteOffsets.toString(), "[]");
+                        int topicLen = 15;
+                        int consumerIdLen = max(15, consumerID.length());
+                        int hostLen = max(15, host.length());
+                        int clientIdLen = max(15,clientId.length());
+                        int incompleteLen = max(15,incomplete.length());
                         for (var tpInfo : aclient.listOffsets(Map.of(tp.getKey(), OffsetSpec.latest()),
                                 new ListOffsetsOptions().timeoutMs(timeout)).all().get().entrySet()) {
-                            System.out.format("%-60s %-80s %-10s %-15s %-15s %-15s %-15s %-15s %-140s %-100s %-100s %-50s%n%n",
+                            topicLen = max(topicLen, tpInfo.getKey().topic().length());
+                        }
+                        String formatStr = "%-" + groupLen + "s" + " %-" + topicLen + "s %-10s %-15s %-15s %-15s %-15s %-15s %-" + consumerIdLen + "s %-" + hostLen + "s %-" + clientIdLen + "s %-" + incompleteLen + "s%n%n";
+                        System.out.format(formatStr,
+                                "GROUP", "TOPIC", "PARTITION", "CURRENT-OFFSET", "HIGHEST-OFFSET", "LOG-END-OFFSET",
+                                "LAG", "ADJUSTED-LAG", "CONSUMER-ID", "HOST", "CLIENT-ID", "INCOMPLETE-ID");
+                        for (var tpInfo : aclient.listOffsets(Map.of(tp.getKey(), OffsetSpec.latest()),
+                                new ListOffsetsOptions().timeoutMs(timeout)).all().get().entrySet()) {
+                            System.out.format(formatStr,
                                     groupId, tpInfo.getKey().topic(), tpInfo.getKey().partition(),
                                     offsetAndMetadata.offset(), highestSeenOffset.isEmpty() ? "-" : highestSeenOffset, tpInfo.getValue().offset(),
                                     tpInfo.getValue().offset() - offsetAndMetadata.offset(),
                                     highestSeenOffset.isEmpty() ? "-" : tpInfo.getValue().offset() - highestSeenOffset.get() - incompleteOffsets.size(),
-                                    memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.consumerId(), "-") : "-",
-                                    memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.host(), "-") : "-",
-                                    memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.clientId(), "-") : "-",
-                                    StringUtils.defaultIfBlank(incompleteOffsets.toString(), "[]"));
+                                    consumerID,
+                                    host,
+                                    clientId,
+                                    incomplete);
                         }
                     }
                 } else {
                     MemberDescription memberInfo = getMemberForPartion(members, null);
+                    String consumerID = memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.consumerId(), "-") : "-";
+                    String host = memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.host(), "-") : "-";
+                    String clientId = memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.clientId(), "-") : "-";
+                    String incomplete = "[]";
+                    int consumerIdLen = max(15, consumerID.length());
+                    int hostLen = max(15, host.length());
+                    int clientIdLen = max(15,clientId.length());
+                    int incompleteLen = 15;
+                    int topicLen = 15;
+                    for (var member : members) {
+                        for (var tp : member.assignment().topicPartitions() ) {
+                            for (var tpInfo : aclient.listOffsets(Map.of(tp, OffsetSpec.latest()),
+                                new ListOffsetsOptions().timeoutMs(timeout)).all().get().entrySet()) {
+                                topicLen = max(topicLen, tpInfo.getKey().topic().length());
+                            }
+                        }
+                    }
+                    String formatStr = "%-" + groupLen + "s" + " %-" + topicLen + "s %-10s %-15s %-15s %-15s %-15s %-15s %-" + consumerIdLen + "s %-" + hostLen + "s %-" + clientIdLen + "s %-" + incompleteLen + "s%n%n";
+                    System.out.format(formatStr,
+                            "GROUP", "TOPIC", "PARTITION", "CURRENT-OFFSET", "HIGHEST-OFFSET", "LOG-END-OFFSET",
+                            "LAG", "ADJUSTED-LAG", "CONSUMER-ID", "HOST", "CLIENT-ID", "INCOMPLETE-ID");
                     for (var member : members) {
                         for (var tp : member.assignment().topicPartitions() ) {
                             for (var tpInfo : aclient.listOffsets(Map.of(tp, OffsetSpec.latest()),
                                     new ListOffsetsOptions().timeoutMs(timeout)).all().get().entrySet()) {
-                                System.out.format("%-60s %-80s %-10s %-15s %-15s %-15s %-15s %-15s %-140s %-100s %-100s %-50s%n%n",
+                                System.out.format(formatStr,
                                         groupId, tpInfo.getKey().topic(), tpInfo.getKey().partition(),
                                         tpInfo.getValue().offset(), "-", tpInfo.getValue().offset(),
                                         "-",
                                         "-",
-                                        memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.consumerId(), "-") : "-",
-                                        memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.host(), "-") : "-",
-                                        memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.clientId(), "-") : "-",
-                                        "[]");
+                                        consumerID,
+                                        host,
+                                        clientId,
+                                        incomplete);
 
                             }
                         }
@@ -156,4 +193,5 @@ class KafkaPcGroups implements Callable<Integer> {
         }
         return null;
     }
-}
+
+ }
