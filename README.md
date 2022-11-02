@@ -22,7 +22,9 @@ Prints highest seen offset and incomplete offsets for parallel consumer groups.
       --command-config=<configFile>
                             Property file containing configs to be passed to
                               Admin Client and Consumer.
-      --group=<groupid>     The consumer group we wish to act on.
+      --detail              Provide extended result set (e.g. list of
+                              incompletes).                              
+      --group=<groupid>     The consumer group we wish to act on (supports regular expressions)
   -h, --help                Show this help message and exit.
       --timeout=<timeout>   The timeout that can be set for someuse cases. For
                               example, it can be used when describing the group
@@ -42,7 +44,8 @@ Output:
 ```
 HIGHEST-OFFSET - highest offset read by the Parallel Consumer
 ADJUSTED-LAG   - lag adjusted based on the number of incomplete offsets
-INCOMPLETE-ID  - list of incomplete offsets
+INCOMPLETE-ID  - list of incomplete offsets (only with --detail option)
+INCOMPLETE-COUNT - number of incomplete offsets
 ```
 The  rest is the same as for the kafka-consumer-groups 
 

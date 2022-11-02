@@ -12,8 +12,6 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <source.version>17</source.version>
-        <release.target>11</release.target>
         <lombok.version>1.18.24</lombok.version>
         <kafka.version>3.2.3</kafka.version>
         <pc.version>0.5.2.3</pc.version>
@@ -21,10 +19,8 @@
         <picoli.version>4.6.3</picoli.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        <source.version>17</source.version>
+        <source.version>11</source.version>
         <release.target>8</release.target>
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
         <exec.mainClass>io.confluent.ps.pctools.KafkaPcGroups</exec.mainClass>
     </properties>
 
@@ -75,9 +71,10 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.6.1</version>
-                <configuration>
-                    <source>11</source>
-                    <target>11</target>
+		<configuration>
+  	            <release>${release.target}</release>		
+  	            <target>${release.target}</target>		
+		    <source>${source.version}</source>
                 </configuration>
             </plugin>
 

@@ -7,9 +7,13 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.Callable;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import io.confluent.parallelconsumer.offsets.OffsetDecodingError;
 import lombok.extern.slf4j.Slf4j;
+import lombok.var;
+import org.apache.commons.lang3.RegExUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.kafka.clients.admin.*;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
@@ -18,7 +22,7 @@ import io.confluent.parallelconsumer.offsets.OffsetMapCodecManager;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
-
+import pl.tlinkowski.unij.api.UniMaps;
 import static java.lang.Math.max;
 
 @Slf4j
@@ -32,7 +36,7 @@ class KafkaPcGroups implements Callable<Integer> {
     @CommandLine.ArgGroup(exclusive = true, multiplicity = "1")
     OneOrAll groupSelect;
     static class OneOrAll {
-        @Option(names = {"--group"}, required = true, description = "The consumer group we wish to act on.")
+        @Option(names = {"--group"}, required = true, description = "The consumer group we wish to act on (supports regular expressions).")
         private String groupid;
         @Option(names = {"--all-groups"}, required = true, description = "Apply to all consumer groups.")
         boolean allgroups = false;
@@ -48,6 +52,8 @@ class KafkaPcGroups implements Callable<Integer> {
                                                  "just created, or is going through " +
                                                  "some changes). (default: 15000)")
     Integer timeout = 15000;
+    @Option(names = {"--detail"}, required = false, description = "Provide extended result set (e.g. list of incompletes).")
+    boolean extendedDetail = false;
 
     @Override
     public Integer call() throws Exception {
@@ -57,11 +63,14 @@ class KafkaPcGroups implements Callable<Integer> {
         }
         props.put("bootstrap.servers", bootstrap);
         try (AdminClient aclient = AdminClient.create(props)) {
-            Set<String> groupsList = new HashSet<>();
+            Set<String> groupsList;
+            Set<String> tempList = new HashSet<>();
+            aclient.listConsumerGroups().all().get().forEach(item -> tempList.add(item.groupId()));
             if (groupSelect.allgroups) {
-                aclient.listConsumerGroups().all().get().forEach(item -> groupsList.add(item.groupId()));
+                groupsList = tempList;
             } else {
-                groupsList.add(groupSelect.groupid);
+                Pattern pattern = Pattern.compile(groupSelect.groupid);
+                groupsList = tempList.stream().filter(pattern.asPredicate()).collect(Collectors.toSet());
             }
             var cgDescribe = aclient.describeConsumerGroups(groupsList,
                             new DescribeConsumerGroupsOptions().timeoutMs(timeout))
@@ -96,27 +105,27 @@ class KafkaPcGroups implements Callable<Integer> {
                         String consumerID = memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.consumerId(), "-") : "-";
                         String host = memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.host(), "-") : "-";
                         String clientId = memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.clientId(), "-") : "-";
-                        String incomplete = StringUtils.defaultIfBlank(incompleteOffsets.toString(), "[]");
+                        String incomplete = extendedDetail ? StringUtils.defaultIfBlank(incompleteOffsets.toString(), "[]") : String.valueOf(incompleteOffsets.size());
                         int topicLen = 15;
                         int consumerIdLen = max(15, consumerID.length());
                         int hostLen = max(15, host.length());
                         int clientIdLen = max(15,clientId.length());
                         int incompleteLen = max(15,incomplete.length());
-                        for (var tpInfo : aclient.listOffsets(Map.of(tp.getKey(), OffsetSpec.latest()),
+                        for (var tpInfo : aclient.listOffsets(UniMaps.of(tp.getKey(), OffsetSpec.latest()),
                                 new ListOffsetsOptions().timeoutMs(timeout)).all().get().entrySet()) {
                             topicLen = max(topicLen, tpInfo.getKey().topic().length());
                         }
                         String formatStr = "%-" + groupLen + "s" + " %-" + topicLen + "s %-10s %-15s %-15s %-15s %-15s %-15s %-" + consumerIdLen + "s %-" + hostLen + "s %-" + clientIdLen + "s %-" + incompleteLen + "s%n%n";
                         System.out.format(formatStr,
                                 "GROUP", "TOPIC", "PARTITION", "CURRENT-OFFSET", "HIGHEST-OFFSET", "LOG-END-OFFSET",
-                                "LAG", "ADJUSTED-LAG", "CONSUMER-ID", "HOST", "CLIENT-ID", "INCOMPLETE-ID");
-                        for (var tpInfo : aclient.listOffsets(Map.of(tp.getKey(), OffsetSpec.latest()),
+                                "LAG", "ADJUSTED-LAG", "CONSUMER-ID", "HOST", "CLIENT-ID", extendedDetail ? "INCOMPLETE-ID" : "INCOMPLETE-COUNT");
+                        for (var tpInfo : aclient.listOffsets(UniMaps.of(tp.getKey(), OffsetSpec.latest()),
                                 new ListOffsetsOptions().timeoutMs(timeout)).all().get().entrySet()) {
                             System.out.format(formatStr,
                                     groupId, tpInfo.getKey().topic(), tpInfo.getKey().partition(),
-                                    offsetAndMetadata.offset(), highestSeenOffset.isEmpty() ? "-" : highestSeenOffset, tpInfo.getValue().offset(),
+                                    offsetAndMetadata.offset(), highestSeenOffset.isPresent() ? highestSeenOffset.get() : "-", tpInfo.getValue().offset(),
                                     tpInfo.getValue().offset() - offsetAndMetadata.offset(),
-                                    highestSeenOffset.isEmpty() ? "-" : tpInfo.getValue().offset() - highestSeenOffset.get() - incompleteOffsets.size(),
+                                    highestSeenOffset.isPresent() ? tpInfo.getValue().offset() - highestSeenOffset.get() - incompleteOffsets.size() : "-",
                                     consumerID,
                                     host,
                                     clientId,
@@ -125,10 +134,10 @@ class KafkaPcGroups implements Callable<Integer> {
                     }
                 } else {
                     MemberDescription memberInfo = getMemberForPartion(members, null);
-                    String consumerID = memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.consumerId(), "-") : "-";
-                    String host = memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.host(), "-") : "-";
+                    String consumerID = memberInfo != null ? StringUtils.defaultIfEmpty(memberInfo.consumerId(), "-") : "-";
+                    String host = memberInfo != null ? StringUtils.defaultIfEmpty(memberInfo.host(), "-") : "-";
                     String clientId = memberInfo != null ? StringUtils.defaultIfBlank(memberInfo.clientId(), "-") : "-";
-                    String incomplete = "[]";
+                    String incomplete = extendedDetail ? "[]" : "0";
                     int consumerIdLen = max(15, consumerID.length());
                     int hostLen = max(15, host.length());
                     int clientIdLen = max(15,clientId.length());
@@ -136,7 +145,7 @@ class KafkaPcGroups implements Callable<Integer> {
                     int topicLen = 15;
                     for (var member : members) {
                         for (var tp : member.assignment().topicPartitions() ) {
-                            for (var tpInfo : aclient.listOffsets(Map.of(tp, OffsetSpec.latest()),
+                            for (var tpInfo : aclient.listOffsets(UniMaps.of(tp, OffsetSpec.latest()),
                                 new ListOffsetsOptions().timeoutMs(timeout)).all().get().entrySet()) {
                                 topicLen = max(topicLen, tpInfo.getKey().topic().length());
                             }
@@ -145,10 +154,10 @@ class KafkaPcGroups implements Callable<Integer> {
                     String formatStr = "%-" + groupLen + "s" + " %-" + topicLen + "s %-10s %-15s %-15s %-15s %-15s %-15s %-" + consumerIdLen + "s %-" + hostLen + "s %-" + clientIdLen + "s %-" + incompleteLen + "s%n%n";
                     System.out.format(formatStr,
                             "GROUP", "TOPIC", "PARTITION", "CURRENT-OFFSET", "HIGHEST-OFFSET", "LOG-END-OFFSET",
-                            "LAG", "ADJUSTED-LAG", "CONSUMER-ID", "HOST", "CLIENT-ID", "INCOMPLETE-ID");
+                            "LAG", "ADJUSTED-LAG", "CONSUMER-ID", "HOST", "CLIENT-ID", extendedDetail ? "INCOMPLETE-ID" : "INCOMPLETE-COUNT");
                     for (var member : members) {
                         for (var tp : member.assignment().topicPartitions() ) {
-                            for (var tpInfo : aclient.listOffsets(Map.of(tp, OffsetSpec.latest()),
+                            for (var tpInfo : aclient.listOffsets(UniMaps.of(tp, OffsetSpec.latest()),
                                     new ListOffsetsOptions().timeoutMs(timeout)).all().get().entrySet()) {
                                 System.out.format(formatStr,
                                         groupId, tpInfo.getKey().topic(), tpInfo.getKey().partition(),
